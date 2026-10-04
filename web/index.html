@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Muse Protocol — Your business, with an agent</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0b0d12; color: #e8eaf0; font-family: -apple-system, "Segoe UI", sans-serif; padding: 24px; }
+  .wrap { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 32px; margin-bottom: 8px; }
+  p.sub { color: #9aa0b0; margin-bottom: 28px; }
+  .pack { border: 1px solid #232838; border-radius: 12px; padding: 16px; margin-bottom: 12px; cursor: pointer; }
+  .pack.selected { border-color: #6c8cff; background: #131a2e; }
+  .pack h3 { font-size: 18px; margin-bottom: 4px; }
+  .pack p { color: #9aa0b0; font-size: 14px; }
+  label { display: block; margin: 16px 0 6px; color: #9aa0b0; font-size: 14px; }
+  input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #232838; background: #131722; color: #fff; font-size: 16px; }
+  button { width: 100%; margin-top: 20px; padding: 14px; border: none; border-radius: 10px; background: #6c8cff; color: #fff; font-size: 17px; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; }
+  #result { margin-top: 24px; padding: 16px; border-radius: 12px; background: #10241a; border: 1px solid #1f5c3d; display: none; }
+  #result code { color: #7dffa8; }
+  #error { margin-top: 24px; padding: 16px; border-radius: 12px; background: #2a1215; border: 1px solid #6b222a; display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Get your agent.</h1>
+  <p class="sub">Pick what you want handled. We set up your agent's email — you just talk to it like an employee.</p>
+  <div id="packs"></div>
+  <label>Your name</label>
+  <input id="name" placeholder="Ty Burton">
+  <label>Your email</label>
+  <input id="email" type="email" placeholder="you@business.com">
+  <button id="go" disabled>Set up my agent</button>
+  <div id="result"></div>
+  <div id="error"></div>
+</div>
+<script>
+let selected = null;
+fetch('/v1/packs').then(r => r.json()).then(d => {
+  const el = document.getElementById('packs');
+  d.packs.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'pack';
+    div.innerHTML = '<h3>' + p.name + '</h3><p>' + p.tagline + ' ' + p.outcome + '</p>';
+    div.onclick = () => {
+      document.querySelectorAll('.pack').forEach(x => x.classList.remove('selected'));
+      div.classList.add('selected');
+      selected = p.id;
+      document.getElementById('go').disabled = false;
+    };
+    el.appendChild(div);
+  });
+});
+document.getElementById('go').onclick = async () => {
+  const btn = document.getElementById('go');
+  btn.disabled = true; btn.textContent = 'Setting up…';
+  const resEl = document.getElementById('result'), errEl = document.getElementById('error');
+  resEl.style.display = 'none'; errEl.style.display = 'none';
+  try {
+    const r = await fetch('/v1/provision', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name: document.getElementById('name').value,
+        email: document.getElementById('email').value,
+        pack: selected
+      })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'failed');
+    resEl.innerHTML = '<p>' + d.message + '</p><p style="margin-top:8px">Agent email: <code>' + d.inbox_email + '</code></p>';
+    resEl.style.display = 'block';
+  } catch (e) {
+    errEl.textContent = 'Something went wrong: ' + e.message;
+    errEl.style.display = 'block';
+  }
+  btn.disabled = false; btn.textContent = 'Set up my agent';
+};
+</script>
+</body>
+</html>

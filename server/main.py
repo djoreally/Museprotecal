@@ -19,6 +19,7 @@ from server.comms import send_email
 from server.provision import provision_inbox, slugify
 
 load_dotenv()
+load_dotenv(".env.local", override=False)
 db.init()
 
 app = FastAPI(title="Muse Protocol")

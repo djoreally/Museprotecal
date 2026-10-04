@@ -9,8 +9,8 @@ import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from server import db
@@ -69,19 +69,23 @@ def provision(req: ProvisionRequest):
     except Exception as e:
         raise HTTPException(502, f"inbox provisioning failed: {e}")
 
-    # 2. Phone number (best effort — skipped if Twilio isn't configured)
+    # 2. Phone number via AgentPhone (best effort — skipped if not configured)
     phone = None
+    agentphone_agent_id = None
     phone_note = "Texting activates once phone provisioning is configured."
-    if os.environ.get("TWILIO_ACCOUNT_SID"):
-        from server.phone import provision_phone_number
+    if os.environ.get("AGENTPHONE_API_KEY"):
+        from server.phone import provision_phone
 
         try:
-            result = provision_phone_number(
-                area_code=req.area_code,
+            result = provision_phone(
+                name=f"{req.name} agent",
                 webhook_base=os.environ.get("WEBHOOK_BASE", ""),
             )
             phone = result["phone"]
-            phone_note = f"Text {phone} like an employee — your agent answers."
+            agentphone_agent_id = result["agent_id"]
+            phone_note = (
+                f"Call or text {phone} like an employee — your agent answers."
+            )
         except Exception as e:
             phone_note = f"Phone provisioning failed (inbox is live): {e}"
 
@@ -93,6 +97,7 @@ def provision(req: ProvisionRequest):
         "inbox_id": inbox["inbox_id"],
         "inbox_email": inbox["inbox_email"],
         "phone": phone,
+        "agentphone_agent_id": agentphone_agent_id,
         "created_at": db.now(),
     }
     db.save(tenant)
@@ -128,9 +133,9 @@ def _find_tenant_by_inbox(inbox_id: str):
     return None
 
 
-def _find_tenant_by_phone(phone: str):
+def _find_tenant_by_agentphone(agent_id: str):
     for t in db.list_all():
-        if t.get("phone") == phone:
+        if t.get("agentphone_agent_id") == agent_id:
             return t
     return None
 
@@ -153,21 +158,42 @@ def agentmail_webhook(payload: dict):
         return {"received": True, "handled": False, "reason": str(e)}
 
 
-@app.post("/v1/webhooks/sms")
-async def sms_webhook(request: Request):
-    """Inbound SMS (Twilio) -> tenant's agent -> SMS reply."""
-    form = await request.form()
-    to_number = form.get("To", "")
-    from_number = form.get("From", "")
-    body = form.get("Body", "")
-    tenant = _find_tenant_by_phone(to_number)
-    if not tenant:
-        return PlainTextResponse("<Response></Response>", media_type="text/xml")
-    reply = handle_inbound(tenant, "sms", from_number, body)
-    try:
-        from server.phone import send_sms
+@app.post("/v1/webhooks/agentphone")
+def agentphone_webhook(payload: dict):
+    """Inbound SMS/voice via AgentPhone -> tenant's agent -> reply.
 
-        send_sms(tenant["phone"], from_number, reply)
-    except Exception:
-        pass
-    return PlainTextResponse("<Response></Response>", media_type="text/xml")
+    Voice channel: AgentPhone expects {"text": ...} back for the live turn.
+    SMS channel: 200 OK is enough; the reply goes out via POST /v1/messages.
+    """
+    if payload.get("event") not in ("agent.message", "message.received"):
+        # call_ended transcripts etc: acknowledge, handle later
+        return {"received": True, "handled": False, "reason": "event ignored"}
+
+    agent_id = payload.get("agentId") or payload.get("agent_id", "")
+    tenant = _find_tenant_by_agentphone(agent_id) if agent_id else None
+    if not tenant:
+        return {"received": True, "handled": False, "reason": "unknown agent"}
+
+    data = payload.get("data", {}) or {}
+    sender = data.get("from", "")
+    body = data.get("message") or data.get("body") or data.get("transcript", "")
+    channel = payload.get("channel", "sms")
+
+    reply = handle_inbound(tenant, channel, sender, body)
+
+    if channel == "voice":
+        return {"text": reply}
+
+    try:
+        from server.phone import send_message
+
+        send_message(
+            agent_id=tenant["agentphone_agent_id"],
+            to_number=sender,
+            body=reply,
+            from_number=tenant.get("phone") or "",
+        )
+        return {"received": True, "handled": True}
+    except Exception as e:
+        return {"received": True, "handled": False, "reason": str(e)}
+

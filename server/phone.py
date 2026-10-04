@@ -1,35 +1,58 @@
-"""Twilio phone provisioning. One SMS-capable number per tenant."""
+"""AgentPhone provisioning. One agent persona + phone number per tenant.
+
+Flow per tenant:
+  1. POST /v1/agents            -> agent persona (the tenant's agent)
+  2. POST /v1/numbers           -> SMS+voice-enabled number
+  3. POST /v1/agents/{id}/numbers -> attach number to the agent
+  4. POST /v1/agents/{id}/webhook -> per-agent webhook for inbound events
+"""
 import os
 
+import requests
 
-def _client():
-    from twilio.rest import Client
-
-    sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
-    token = os.environ.get("TWILIO_AUTH_TOKEN", "")
-    if not sid or not token:
-        raise RuntimeError("TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN not set")
-    return Client(sid, token)
+API_BASE = "https://api.agentphone.ai/v1"
 
 
-def provision_phone_number(area_code: str = "", webhook_base: str = "") -> dict:
-    """Buy an SMS-capable US number and point its SMS webhook at us."""
-    client = _client()
-    search = {"sms_enabled": True, "limit": 1}
-    if area_code:
-        search["area_code"] = area_code
-    available = client.available_phone_numbers("US").local.list(**search)
-    if not available:
-        raise RuntimeError("no SMS-capable numbers available")
-    kwargs = {"phone_number": available[0].phone_number}
+def _headers():
+    key = os.environ.get("AGENTPHONE_API_KEY", "")
+    if not key:
+        raise RuntimeError("AGENTPHONE_API_KEY is not set")
+    return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+
+def _post(path: str, body: dict) -> dict:
+    resp = requests.post(f"{API_BASE}{path}", headers=_headers(), json=body, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def provision_phone(name: str, webhook_base: str = "") -> dict:
+    """Create the tenant's agent, number, attachment, and webhook. Returns IDs + number."""
+    agent = _post("/agents", {"name": name})
+    agent_id = agent.get("id") or agent.get("agent_id") or agent.get("agentId")
+    if not agent_id:
+        raise RuntimeError(f"agent create returned no id: {agent}")
+
+    number = _post("/numbers", {})
+    number_id = number.get("id") or number.get("number_id") or number.get("numberId")
+    phone = number.get("phone_number") or number.get("phoneNumber") or number.get("number")
+    if not number_id:
+        raise RuntimeError(f"number provision returned no id: {number}")
+
+    _post(f"/agents/{agent_id}/numbers", {"numberId": number_id})
+
     if webhook_base:
-        kwargs["sms_url"] = f"{webhook_base.rstrip('/')}/v1/webhooks/sms"
-        kwargs["sms_method"] = "POST"
-    number = client.incoming_phone_numbers.create(**kwargs)
-    return {"phone": number.phone_number, "sid": number.sid}
+        _post(
+            f"/agents/{agent_id}/webhook",
+            {"url": f"{webhook_base.rstrip('/')}/v1/webhooks/agentphone", "timeout": 30},
+        )
+
+    return {"agent_id": agent_id, "number_id": number_id, "phone": phone}
 
 
-def send_sms(from_number: str, to: str, body: str) -> dict:
-    client = _client()
-    msg = client.messages.create(from_=from_number, to=to, body=body)
-    return {"sid": msg.sid}
+def send_message(agent_id: str, to_number: str, body: str, from_number: str = "") -> dict:
+    """Send SMS (or iMessage) as the tenant's agent."""
+    payload = {"to_number": to_number, "body": body, "agent_id": agent_id}
+    if from_number:
+        payload["from_number"] = from_number
+    return _post("/messages", payload)

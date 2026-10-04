@@ -32,11 +32,13 @@ Open http://localhost:8000, pick a pack, enter a name + email.
 
 ## Roadmap
 
-- ~~Phone/SMS provisioning per tenant (telephony provider)~~ **done** —
-  Twilio buys an SMS-capable number per tenant and points it at
-  `/v1/webhooks/sms`. Needs `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` in `.env`.
-- ~~Agent loop~~ **v1 done** — inbound mail/SMS routes to the tenant's pack
-  handler and replies in the same channel. `server/agent.py:run_agent` is the
-  plug-in point for a real model (e.g. the Muse model API at dev.meta.ai).
+- ~~Phone provisioning per tenant~~ **done** — AgentPhone creates the
+  tenant's agent persona, provisions an SMS+voice number, attaches it, and
+  points the per-agent webhook at `/v1/webhooks/agentphone`. Needs
+  `AGENTPHONE_API_KEY` in `.env`. Customers can call *and* text their agent.
+- ~~Agent loop~~ **v1 done** — inbound mail/SMS/voice routes to the tenant's
+  pack handler and replies in the same channel (voice turns return
+  `{"text": ...}` live). `server/agent.py:run_agent` is the plug-in point
+  for a real model (e.g. the Muse model API at dev.meta.ai).
 - Skill Store deep link: pack cards link straight to `/?pack=front-desk`.
-- Billing: pass AgentMail + Twilio usage through per tenant.
+- Billing: pass AgentMail + AgentPhone usage through per tenant.

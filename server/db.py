@@ -24,10 +24,15 @@ def init():
                 inbox_id TEXT,
                 inbox_email TEXT,
                 phone TEXT,
+                agentphone_agent_id TEXT,
                 created_at INTEGER NOT NULL
             )
             """
         )
+        # migration for DBs created before the AgentPhone switch
+        cols = [r[1] for r in c.execute("PRAGMA table_info(tenants)").fetchall()]
+        if "agentphone_agent_id" not in cols:
+            c.execute("ALTER TABLE tenants ADD COLUMN agentphone_agent_id TEXT")
 
 
 def save(tenant: dict):

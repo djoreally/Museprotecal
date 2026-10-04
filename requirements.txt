@@ -3,5 +3,3 @@ uvicorn[standard]
 pydantic
 requests
 python-dotenv
-twilio
-python-multipart

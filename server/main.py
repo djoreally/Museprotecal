@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from server import db
-from server.agent import handle_inbound
+from server.agent import MuseError, handle_inbound
 from server.comms import send_email
 from server.provision import provision_inbox, slugify
 
@@ -151,7 +151,10 @@ def agentmail_webhook(payload: dict):
     sender = payload.get("from") or payload.get("sender", "")
     body = payload.get("text") or payload.get("body") or payload.get("preview", "")
     subject = payload.get("subject", "")
-    reply = handle_inbound(tenant, "email", sender, f"{subject}\n{body}".strip())
+    try:
+        reply = handle_inbound(tenant, "email", sender, f"{subject}\n{body}".strip())
+    except MuseError:
+        raise HTTPException(502, "agent response unavailable")
     try:
         send_email(tenant["inbox_id"], sender, f"Re: {subject}", reply)
         return {"received": True, "handled": True}
@@ -180,7 +183,10 @@ def agentphone_webhook(payload: dict):
     body = data.get("message") or data.get("body") or data.get("transcript", "")
     channel = payload.get("channel", "sms")
 
-    reply = handle_inbound(tenant, channel, sender, body)
+    try:
+        reply = handle_inbound(tenant, channel, sender, body)
+    except MuseError:
+        raise HTTPException(502, "agent response unavailable")
 
     if channel == "voice":
         return {"text": reply}

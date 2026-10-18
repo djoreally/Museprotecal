@@ -9,7 +9,7 @@ email address (and soon, its own phone number). Talk to it like an employee.
 2. `POST /v1/provision` creates a dedicated AgentMail inbox via
    `POST /v0/inboxes` — idempotent per tenant via `client_id`, tagged with
    `metadata.tenant_id`.
-3. The tenant row (SQLite) maps the human to their inbox + pack.
+3. The tenant row (database) maps the human to their inbox + pack.
 4. Inbound mail hits `POST /v1/webhooks/agentmail` — the agent loop attaches here.
 
 ## Quickstart
@@ -38,7 +38,14 @@ Open http://localhost:8000, pick a pack, enter a name + email.
   `AGENTPHONE_API_KEY` in `.env`. Customers can call *and* text their agent.
 - ~~Agent loop~~ **v1 done** — inbound mail/SMS/voice routes to the tenant's
   pack handler and replies in the same channel (voice turns return
-  `{"text": ...}` live). `server/agent.py:run_agent` is the plug-in point
-  for a real model (e.g. the Muse model API at dev.meta.ai).
+  `{"text": ...}` live). `server/agent.py:run_agent` calls Meta's Muse Wonder via the Responses API; it requires a server-side `MODEL_API_KEY`.
 - Skill Store deep link: pack cards link straight to `/?pack=front-desk`.
 - Billing: pass AgentMail + AgentPhone usage through per tenant.
+
+## Meta Muse Wonder setup
+
+Set `MODEL_API_KEY` on the server to a current Meta Model API key. The default model is `muse-wonder-1.0` at `https://api.meta.ai/v1/responses`. Optional overrides: `META_MODEL`, `META_API_BASE_URL`, and `META_REASONING_EFFORT`. Do not set the key in frontend code or commit it.
+
+The incoming email/SMS/voice webhooks now call Muse rather than an acknowledgement stub. API failures return HTTP 502 and do **not** send a fake success reply. Deploy the code and environment configuration on your VPS separately.
+
+Test the integration without Meta network access using `python -m unittest discover -s tests -v`. A live API smoke test and phone/email delivery tests must be run after provisioning the new key on the VPS.
